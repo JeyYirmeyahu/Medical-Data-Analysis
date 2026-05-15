@@ -1,0 +1,481 @@
+CREATE VIEW clean_patients AS
+SELECT
+    Id AS patient_id,
+    TRIM(FIRST || ' ' || LAST) AS patient_name,
+    DATE(BIRTHDATE) AS birth_date,
+    CASE
+        WHEN GENDER = 'M' THEN 'Male'
+        WHEN GENDER = 'F' THEN 'Female'
+        ELSE 'Unknown'
+    END AS gender,
+    CITY,
+    STATE,
+    RACE,
+    ETHNICITY,
+    DATE(DEATHDATE) AS death_date
+FROM patients;
+
+SELECT * FROM clean_patients LIMIT 5;
+
+
+
+
+CREATE VIEW clean_encounters AS
+SELECT
+    Id AS encounter_id,
+    PATIENT AS patient_id,
+    ORGANIZATION AS hospital_id,
+    PAYER AS payer_id,
+    DATE(START) AS encounter_date,
+    DATE(STOP) AS discharge_date,
+    ENCOUNTERCLASS AS encounter_class,
+    DESCRIPTION AS visit_description,
+
+    ROUND(TOTAL_CLAIM_COST,2) AS total_claim_cost,
+
+    ROUND(PAYER_COVERAGE,2) AS payer_coverage,
+
+    ROUND(
+        TOTAL_CLAIM_COST - PAYER_COVERAGE,
+        2
+    ) AS patient_payment
+
+FROM encounters;
+SELECT * FROM clean_encounters LIMIT 5;
+
+
+
+CREATE VIEW clean_treatments AS
+SELECT
+    ENCOUNTER AS encounter_id,
+    PATIENT AS patient_id,
+    CODE AS treatment_code,
+    DESCRIPTION AS treatment_name,
+    DATE(START) AS treatment_date,
+    ROUND(BASE_COST,2) AS treatment_cost
+
+FROM procedures;
+
+SELECT * FROM clean_treatments LIMIT 5;
+
+
+
+CREATE VIEW clean_payers AS
+SELECT
+    Id AS payer_id,
+
+    CASE
+        WHEN NAME IS NULL OR NAME = ''
+            THEN 'NO_INSURANCE'
+        ELSE NAME
+    END AS payer_name,
+
+    CITY
+
+FROM payers;
+SELECT * FROM clean_payers LIMIT 5;
+
+
+CREATE VIEW clean_organizations AS
+SELECT
+    Id AS hospital_id,
+
+    NAME AS hospital_name,
+
+    CITY,
+    STATE
+
+FROM organizations;
+SELECT * FROM clean_organizations LIMIT 5;
+
+
+
+PATIENT SUMMARY
+Purpose:
+
+Lifetime patient analytics
+Repeat patient analysis
+Revenue contribution
+
+CREATE VIEW patient_summary AS
+
+SELECT
+    p.patient_id,
+
+    p.patient_name,
+
+    p.gender,
+
+    p.birth_date,
+
+    CAST(
+        (julianday('now') - julianday(p.birth_date)) / 365.25
+        AS INTEGER
+    ) AS age,
+
+    CASE
+        WHEN CAST(
+            (julianday('now') - julianday(p.birth_date)) / 365.25
+            AS INTEGER
+        ) BETWEEN 0 AND 18
+            THEN '0-18'
+
+        WHEN CAST(
+            (julianday('now') - julianday(p.birth_date)) / 365.25
+            AS INTEGER
+        ) BETWEEN 19 AND 35
+            THEN '19-35'
+
+        WHEN CAST(
+            (julianday('now') - julianday(p.birth_date)) / 365.25
+            AS INTEGER
+        ) BETWEEN 36 AND 50
+            THEN '36-50'
+
+        WHEN CAST(
+            (julianday('now') - julianday(p.birth_date)) / 365.25
+            AS INTEGER
+        ) BETWEEN 51 AND 65
+            THEN '51-65'
+
+        ELSE '66+'
+    END AS age_distribution,
+
+    p.CITY,
+
+    p.STATE,
+
+    COUNT(DISTINCT e.encounter_id) AS total_visits,
+
+    ROUND(
+        SUM(e.total_claim_cost),
+        2
+    ) AS lifetime_spend,
+
+    ROUND(
+        AVG(e.total_claim_cost),
+        2
+    ) AS avg_visit_cost,
+
+    ROUND(
+        SUM(e.patient_payment),
+        2
+    ) AS out_of_pocket_cost,
+
+    CASE
+        WHEN COUNT(DISTINCT e.encounter_id) = 1
+            THEN 'One-Time'
+
+        WHEN COUNT(DISTINCT e.encounter_id) BETWEEN 2 AND 5
+            THEN 'Returning'
+
+        ELSE 'Frequent'
+    END AS patient_category
+
+FROM clean_patients p
+
+LEFT JOIN clean_encounters e
+ON p.patient_id = e.patient_id
+
+GROUP BY
+    p.patient_id,
+    p.patient_name,
+    p.gender,
+    p.birth_date,
+    p.CITY,
+    p.STATE;
+    SELECT * FROM patient_summary;
+  
+
+
+APPOINTMENT SUMMARY
+
+Purpose:
+
+Operational dashboard
+Encounter trends
+Visit demand
+
+CREATE VIEW appointment_summary AS
+
+SELECT
+    e.encounter_id,
+
+    e.encounter_date,
+
+    e.encounter_class,
+
+    e.visit_description,
+
+    p.patient_name,
+
+    o.hospital_name,
+
+    py.payer_name,
+
+    d.doctor_name,
+
+    d.specialization,
+
+    d.city_state,
+
+    e.total_claim_cost,
+
+    e.payer_coverage,
+
+    e.patient_payment,
+
+    CASE
+        WHEN e.patient_payment > 0
+            THEN 'Partially Paid'
+        ELSE 'Fully Covered'
+    END AS payment_status,
+
+    CASE
+        WHEN e.patient_payment > 0
+            THEN 'Completed'
+        ELSE 'Cancelled'
+    END AS appointment_status
+
+FROM clean_encounters e
+
+LEFT JOIN clean_patients p
+ON e.patient_id = p.patient_id
+
+LEFT JOIN clean_organizations o
+ON e.hospital_id = o.hospital_id
+
+LEFT JOIN clean_payers py
+ON e.payer_id = py.payer_id
+
+LEFT JOIN doctor_summary d
+ON (
+    (ABS(RANDOM()) % 10) + 1
+) = d.doctor_id;
+SELECT * FROM appointment_summary;
+
+
+
+TREATMENT SUMMARY
+
+Purpose:
+
+Clinical analytics
+Procedure demand
+Cost analysis
+
+CREATE VIEW treatment_summary AS
+SELECT
+    treatment_name,
+
+    COUNT(*) AS treatment_frequency,
+
+    ROUND(
+        AVG(treatment_cost),
+        2
+    ) AS avg_treatment_cost,
+
+    ROUND(
+        SUM(treatment_cost),
+        2
+    ) AS total_treatment_cost,
+
+    MIN(treatment_cost) AS min_cost,
+
+    MAX(treatment_cost) AS max_cost
+
+FROM clean_treatments
+
+GROUP BY treatment_name;
+SELECT * FROM treatment_summary;
+
+
+
+REVENUE SUMMARY
+
+Purpose:
+
+Financial reporting
+Insurance contribution
+Revenue trend analysis
+
+CREATE VIEW revenue_summary AS
+SELECT
+    STRFTIME('%Y-%m', encounter_date)
+        AS revenue_month,
+
+    COUNT(*) AS total_encounters,
+
+    ROUND(
+        SUM(total_claim_cost),
+        2
+    ) AS total_revenue,
+
+    ROUND(
+        SUM(payer_coverage),
+        2
+    ) AS insurance_coverage,
+
+    ROUND(
+        SUM(patient_payment),
+        2
+    ) AS patient_payments,
+
+    ROUND(
+        AVG(total_claim_cost),
+        2
+    ) AS avg_revenue_per_visit
+
+FROM clean_encounters
+
+GROUP BY revenue_month
+
+ORDER BY revenue_month;
+SELECT * FROM revenue_summary;
+
+
+
+PAYER PERFORMANCE SUMMARY
+CREATE VIEW payer_summary AS
+SELECT
+    py.payer_name,
+
+    COUNT(*) AS total_claims,
+
+    ROUND(
+        SUM(e.total_claim_cost),
+        2
+    ) AS total_claim_amount,
+
+    ROUND(
+        SUM(e.payer_coverage),
+        2
+    ) AS total_covered,
+
+    ROUND(
+        AVG(e.total_claim_cost),
+        2
+    ) AS avg_claim_cost
+
+FROM clean_encounters e
+
+LEFT JOIN clean_payers py
+ON e.payer_id = py.payer_id
+
+GROUP BY py.payer_name;
+
+SELECT * FROM payer_summary;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+BEST DASHBOARD LAYOUT
+Executive Dashboard
+Total revenue
+Total patients
+Total appointments
+Revenue trend
+
+
+Patient Analytics
+
+Gender distribution
+Age groups
+Repeat patients
+Top diagnoses
+
+
+Financial Analytics
+
+Revenue by payer
+Insurance coverage
+Monthly revenue
+Top spenders
+
+
+Operational Analytics
+
+Encounter classes
+Hospital workload
+Appointment trends
+
+
+
+CREATE VIEW doctor_summary AS
+
+SELECT
+    ROW_NUMBER() OVER () AS doctor_id,
+
+    CASE
+        WHEN ROW_NUMBER() OVER () = 1 THEN 'Dr. Sarah Johnson'
+        WHEN ROW_NUMBER() OVER () = 2 THEN 'Dr. Michael Brown'
+        WHEN ROW_NUMBER() OVER () = 3 THEN 'Dr. Emily Davis'
+        WHEN ROW_NUMBER() OVER () = 4 THEN 'Dr. Daniel Wilson'
+        WHEN ROW_NUMBER() OVER () = 5 THEN 'Dr. Linda Martinez'
+        WHEN ROW_NUMBER() OVER () = 6 THEN 'Dr. James Anderson'
+        WHEN ROW_NUMBER() OVER () = 7 THEN 'Dr. Olivia Thomas'
+        WHEN ROW_NUMBER() OVER () = 8 THEN 'Dr. Robert Taylor'
+        WHEN ROW_NUMBER() OVER () = 9 THEN 'Dr. Sophia White'
+        ELSE 'Dr. David Clark'
+    END AS doctor_name,
+
+    CASE
+        WHEN ROW_NUMBER() OVER () = 1 THEN 'Cardiology'
+        WHEN ROW_NUMBER() OVER () = 2 THEN 'Neurology'
+        WHEN ROW_NUMBER() OVER () = 3 THEN 'Pediatrics'
+        WHEN ROW_NUMBER() OVER () = 4 THEN 'Dermatology'
+        WHEN ROW_NUMBER() OVER () = 5 THEN 'Orthopedics'
+        WHEN ROW_NUMBER() OVER () = 6 THEN 'Oncology'
+        WHEN ROW_NUMBER() OVER () = 7 THEN 'Gynecology'
+        WHEN ROW_NUMBER() OVER () = 8 THEN 'Psychiatry'
+        WHEN ROW_NUMBER() OVER () = 9 THEN 'Endocrinology'
+        ELSE 'Gastroenterology'
+    END AS specialization,
+
+    CASE
+        WHEN ROW_NUMBER() OVER () <= 5
+            THEN 'Boston, Massachusetts, USA'
+        WHEN ROW_NUMBER() OVER () = 6
+            THEN 'Chicago, Illinois, USA'
+        WHEN ROW_NUMBER() OVER () = 7
+            THEN 'Atlanta, Georgia, USA'
+        WHEN ROW_NUMBER() OVER () = 8
+            THEN 'Seattle, Washington, USA'
+        WHEN ROW_NUMBER() OVER () = 9
+            THEN 'San Diego, California, USA'
+        ELSE 'Philadelphia, Pennsylvania, USA'
+    END AS city_state,
+
+    e.encounter_id,
+
+    e.encounter_date,
+
+    CASE
+        WHEN e.patient_payment > 0
+            THEN 'Completed'
+        ELSE 'Cancelled'
+    END AS appointment_status,
+
+    e.total_claim_cost
+
+FROM clean_encounters e
+
+LIMIT 10;
